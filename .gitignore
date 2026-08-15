@@ -1,0 +1,33 @@
+# Local agent/runtime state
+.agents/
+.codex/
+.omx/
+**/.omx/
+**/.runtime/
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Generated training/inference data
+dacl10k-DatasetNinja/
+runs/
+*.pt
+*.onnx
+*.engine
+
+# Local captures and service logs
+*.log
+crack.jpg
+crackimages.jpg
+
+# Existing dependency worktrees, maintained in their own repositories
+drone/aerial/
+drone/pegasus/
+
+# Editor/OS files
+.DS_Store
+.idea/
+.vscode/
