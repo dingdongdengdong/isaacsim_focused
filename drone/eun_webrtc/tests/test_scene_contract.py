@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from steelcrack_usd import minimum_camera_distance_for_decal  # noqa: E402
+
 
 class SceneContractTests(unittest.TestCase):
+    def test_camera_distance_keeps_rotated_decal_inside_frame(self) -> None:
+        distance = minimum_camera_distance_for_decal((2.4, 1.3), 18.0)
+        self.assertGreater(distance, 4.0)
+        self.assertLess(distance, 5.0)
+
     def test_cube_crack_is_replaced_by_rgba_decal_contract(self) -> None:
         scene = (Path(__file__).resolve().parents[1] / "eun_scene.py").read_text(encoding="utf-8")
         self.assertNotIn("add_crack_segment", scene)

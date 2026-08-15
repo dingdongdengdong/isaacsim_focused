@@ -51,9 +51,9 @@ python3 drone/eun_webrtc/validate_steelcrack_sdg.py \
 Only after the smoke report has `passed: true`, run the full set:
 
 ```bash
-drone/eun_webrtc/generate_sdg.sh 5000 steelcrack-train-5000 20260815
+drone/eun_webrtc/generate_sdg.sh 5000 steelcrack-train-5000-v2 20260815
 python3 drone/eun_webrtc/validate_steelcrack_sdg.py \
-  drone/.runtime/eun-webrtc/sdg/steelcrack-train-5000
+  drone/.runtime/eun-webrtc/sdg/steelcrack-train-5000-v2
 ```
 
 Each manifest row records the frame and random seed, Train source ID, decal
@@ -62,6 +62,27 @@ paths, and the homography mask path. Every fifth frame is a clean hard
 negative. The validator decodes every output, creates the binary mask by
 projecting the source alpha through the recorded planar homography, and checks
 the projected decal bounds against the Replicator semantic output.
+
+The camera remains inside the required 3-5 m range while its minimum distance
+is constrained so that the complete rotated decal quad stays in frame. The
+validator reports exact pixel IoU and also a one-pixel-tolerant IoU for thin
+cracks affected by rasterization. Positive frames must be non-empty and the
+one-pixel-tolerant IoU must be at least 0.85.
+
+## Reviewed scene evidence
+
+After the streaming scene has exported `scene.usda`, render the overview and
+front/left/right inspection views with:
+
+```bash
+drone/eun_webrtc/capture_scene_evidence.sh
+```
+
+The PNGs and capture status are written to:
+
+```text
+/home/dong/eun/drone/.runtime/eun-webrtc/evidence/steelcrack-000053/
+```
 
 This is synthetic visual-detection evidence only. It is not structural-depth,
 load-capacity, repair-authority, field-performance, or safety evidence.

@@ -161,6 +161,29 @@ def inspection_camera_poses(target=(20.0, -5.995, 20.0), distance: float = 4.2) 
     return poses
 
 
+def minimum_camera_distance_for_decal(
+    size,
+    rotation_degrees: float,
+    focal_length: float = 35.0,
+    aperture: float = 20.955,
+    image_fill: float = 0.90,
+) -> float:
+    """Return the distance needed to keep the complete rotated quad in view.
+
+    Keeping the whole UV quad visible is important even when a source crack is
+    close to an image edge; otherwise a nominally positive frame can lose every
+    crack pixel after rasterization.
+    """
+    if not 0.0 < image_fill <= 1.0:
+        raise ValueError("image_fill must be in (0, 1]")
+    angle = math.radians(rotation_degrees)
+    cosine, sine = abs(math.cos(angle)), abs(math.sin(angle))
+    projected_width = size[0] * cosine + size[1] * sine
+    projected_height = size[0] * sine + size[1] * cosine
+    half_fov_tangent = aperture / (2.0 * focal_length)
+    return max(projected_width, projected_height) / (2.0 * half_fov_tangent * image_fill)
+
+
 def local_decal_corners(position, size, rotation_degrees: float) -> list[tuple[float, float, float]]:
     angle = math.radians(rotation_degrees)
     cosine, sine = math.cos(angle), math.sin(angle)

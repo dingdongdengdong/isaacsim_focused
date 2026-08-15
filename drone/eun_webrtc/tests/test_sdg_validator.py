@@ -8,10 +8,25 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from validate_steelcrack_sdg import perspective_coefficients, project_alpha, project_point  # noqa: E402
+from validate_steelcrack_sdg import (  # noqa: E402
+    _mask_iou,
+    _mask_iou_with_one_pixel_tolerance,
+    perspective_coefficients,
+    project_alpha,
+    project_point,
+)
 
 
 class SDGValidatorTests(unittest.TestCase):
+    def test_one_pixel_tolerance_handles_thin_rasterization_shift(self) -> None:
+        left = Image.new("L", (16, 16), 0)
+        right = Image.new("L", (16, 16), 0)
+        for x in range(3, 13):
+            left.putpixel((x, 7), 255)
+            right.putpixel((x, 8), 255)
+        self.assertEqual(_mask_iou(left, right), 0.0)
+        self.assertGreaterEqual(_mask_iou_with_one_pixel_tolerance(left, right), 0.5)
+
     def test_identity_perspective_projection_preserves_mask(self) -> None:
         alpha = Image.new("L", (8, 8), 0)
         for coordinate in ((2, 2), (3, 2), (3, 3)):

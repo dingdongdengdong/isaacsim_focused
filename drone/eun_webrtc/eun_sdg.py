@@ -27,6 +27,7 @@ from steelcrack_usd import (  # noqa: E402
     SEMANTIC_LABEL,
     define_camera,
     define_decal,
+    minimum_camera_distance_for_decal,
     set_camera_pose,
     set_texture,
     transfer_local_to_world,
@@ -183,7 +184,16 @@ async def generate() -> None:
 
             target = transfer_local_to_world(local_position)
             angle = frame_rng.uniform(-30.0, 30.0)
-            distance = frame_rng.uniform(3.0, 5.0)
+            fit_distance = minimum_camera_distance_for_decal(
+                (width, height), rotation, focal_length=35.0, aperture=20.955
+            )
+            minimum_distance = max(3.0, fit_distance)
+            if minimum_distance > 5.0:
+                raise RuntimeError(
+                    f"decal cannot fit inside the configured 3-5 m camera range: "
+                    f"frame={frame_id}, required={minimum_distance:.3f} m"
+                )
+            distance = frame_rng.uniform(minimum_distance, 5.0)
             vertical_offset = frame_rng.uniform(-0.35, 0.35)
             angle_radians = math.radians(angle)
             eye = (
@@ -235,7 +245,12 @@ async def generate() -> None:
                     list(point) for point in world_decal_corners(local_position, (width, height), rotation)
                 ],
                 "camera_prim": CAMERA_PATH,
-                "camera_pose": {"eye": list(eye), "target": list(target), "distance_m": distance},
+                "camera_pose": {
+                    "eye": list(eye),
+                    "target": list(target),
+                    "distance_m": distance,
+                    "minimum_fit_distance_m": minimum_distance,
+                },
                 "camera_intrinsics": {
                     "focal_length_mm": 35.0,
                     "horizontal_aperture_mm": 20.955,
