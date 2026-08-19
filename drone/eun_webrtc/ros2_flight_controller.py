@@ -11,6 +11,7 @@ from std_msgs.msg import Float64
 
 from flight_control_core import (
     VelocityCommand,
+    keyboard_state_to_command,
     quaternion_xyzw_to_matrix,
     velocity_control_wrench,
     yaw_from_matrix,
@@ -58,7 +59,8 @@ class KeyboardRos2Teleop:
         self._viewport = viewport
         self._world_camera_path = world_camera_path
         self._drone_camera_path = drone_camera_path
-        self._using_drone_camera = False
+        self._using_drone_camera = True
+        self._viewport.camera_path = self._drone_camera_path
         self._pressed: set[str] = set()
         self._movement_was_active = False
         self._input = carb.input.acquire_input_interface()
@@ -95,12 +97,7 @@ class KeyboardRos2Teleop:
         return True
 
     def publish(self) -> VelocityCommand | None:
-        command = VelocityCommand(
-            forward=float("W" in self._pressed) - float("S" in self._pressed),
-            left=float("A" in self._pressed) - float("D" in self._pressed),
-            up=float("R" in self._pressed) - float("F" in self._pressed),
-            yaw_rate=float("Q" in self._pressed) - float("E" in self._pressed),
-        ).clipped(2.0, 1.0, 1.0)
+        command = keyboard_state_to_command(self._pressed).clipped(2.0, 1.0, 1.0)
         movement_is_active = any(
             key in self._pressed for key in ("W", "S", "A", "D", "R", "F", "Q", "E")
         )

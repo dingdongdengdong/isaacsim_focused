@@ -38,6 +38,21 @@ from steelcrack_usd import (  # noqa: E402
     inspection_camera_poses,
     load_json,
 )
+from camera_pipeline import (  # noqa: E402
+    CAMERA_FRAME_ID,
+    CAMERA_GRAPH_PRIM,
+    CAMERA_INSPECTION_EYE,
+    CAMERA_INSPECTION_TARGET,
+    CAMERA_PRIM,
+    CAMERA_RELATIVE_PATH,
+    CAMERA_RESOLUTION,
+    CAMERA_RGB_TOPIC,
+    CAMERA_ROTATE_Y_DEG,
+    CAMERA_TRANSLATION_M,
+    DRONE_INSPECTION_SPAWN_ORIENTATION_XYZW,
+    DRONE_INSPECTION_SPAWN_POSITION,
+)
+from ros2_rgb_camera_graph import EUNROS2RGBCameraGraph  # noqa: E402
 
 
 def set_color(prim, color: tuple[float, float, float]) -> None:
@@ -47,71 +62,48 @@ def set_color(prim, color: tuple[float, float, float]) -> None:
     imageable.CreateDisplayColorAttr([color])
 
 
-def add_cube(stage, path: str, position, scale, color) -> None:
+def configure_drone_camera_mount(stage, path: str) -> dict:
+    """Configure the ROS camera as a fixed front-lower child of the Iris body."""
     from pxr import Gf, UsdGeom
+    from steelcrack_usd import look_at_matrix
 
-    cube = UsdGeom.Cube.Define(stage, path)
-    cube.CreateSizeAttr(1.0)
-    cube.AddTranslateOp().Set(Gf.Vec3d(*position))
-    cube.AddScaleOp().Set(Gf.Vec3f(*scale))
-    set_color(cube.GetPrim(), color)
-
-
-def add_cylinder(stage, path: str, position, radius, height, color) -> None:
-    from pxr import Gf, UsdGeom
-
-    cylinder = UsdGeom.Cylinder.Define(stage, path)
-    cylinder.CreateAxisAttr("Z")
-    cylinder.CreateRadiusAttr(radius)
-    cylinder.CreateHeightAttr(height)
-    cylinder.AddTranslateOp().Set(Gf.Vec3d(*position))
-    set_color(cylinder.GetPrim(), color)
-
-
-def add_drone_camera(stage, path: str) -> None:
-    """Create a forward-facing USD camera rigidly attached to the Iris body."""
-    from pxr import Gf, UsdGeom
-
-    camera = UsdGeom.Camera.Define(stage, path)
+    camera_prim = stage.GetPrimAtPath(path)
+    if not camera_prim.IsValid() or not camera_prim.IsA(UsdGeom.Camera):
+        raise RuntimeError(f"ROS2 camera prim is missing or invalid: {path}")
+    camera = UsdGeom.Camera(camera_prim)
     camera.CreateClippingRangeAttr(Gf.Vec2f(0.05, 500.0))
-    xform = UsdGeom.Xformable(camera.GetPrim())
-    xform.AddTranslateOp().Set(Gf.Vec3d(0.30, 0.0, 0.0))
-    # USD cameras look down local -Z. Rotate -90 degrees about Y so -Z is body +X.
-    xform.AddRotateYOp().Set(-90.0)
-
-
-async def capture_viewport(viewport, path: Path, frames: int = 12) -> str:
-    from omni.kit.viewport.utility import capture_viewport_to_file, next_viewport_frame_async
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    for _ in range(frames):
-        try:
-            await next_viewport_frame_async(viewport)
-        except TypeError:
-            await next_viewport_frame_async()
-    # ``Capture.wait_for_result`` is a blocking call.  Calling it from this
-    # ``--exec`` coroutine starves Kit's update loop, so keep the capture
-    # object alive and advance viewport frames until its file is complete.
-    capture = capture_viewport_to_file(viewport, file_path=str(path))
-    previous_size = -1
-    stable_frames = 0
-    for _ in range(180):
-        try:
-            await next_viewport_frame_async(viewport)
-        except TypeError:
-            await next_viewport_frame_async()
-        size = path.stat().st_size if path.is_file() else -1
-        if size > 0 and size == previous_size:
-            stable_frames += 1
-            if stable_frames >= 2:
-                break
-        else:
-            stable_frames = 0
-        previous_size = size
-    else:
-        raise TimeoutError(f"viewport capture did not complete: {path}")
-    del capture
-    return str(path)
+    camera.CreateFocalLengthAttr(18.0)
+    camera.CreateHorizontalApertureAttr(20.955)
+    camera.CreateVerticalApertureAttr(15.71625)
+    xform = UsdGeom.Xformable(camera_prim)
+    xform.ClearXformOpOrder()
+    body_prim = stage.GetPrimAtPath(camera_prim.GetParent().GetPath())
+    if not body_prim.IsValid():
+        raise RuntimeError(f"drone body prim is missing: {camera_prim.GetParent().GetPath()}")
+    body_world = omni.usd.get_world_transform_matrix(body_prim)
+    desired_camera_world = look_at_matrix(CAMERA_INSPECTION_EYE, CAMERA_INSPECTION_TARGET)
+    camera_local = desired_camera_world * body_world.GetInverse()
+    xform.AddTransformOp().Set(camera_local)
+    housing_path = f"{path}/Housing"
+    housing = UsdGeom.Cube.Define(stage, housing_path)
+    housing.CreateSizeAttr(0.12)
+    housing.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.08))
+    housing.AddScaleOp().Set(Gf.Vec3f(1.0, 0.75, 0.55))
+    set_color(housing.GetPrim(), (0.05, 0.75, 0.95))
+    actual_camera_world = omni.usd.get_world_transform_matrix(camera_prim)
+    max_matrix_error = max(
+        abs(float(actual_camera_world[row][column]) - float(desired_camera_world[row][column]))
+        for row in range(4)
+        for column in range(4)
+    )
+    return {
+        "world_transform_max_error": max_matrix_error,
+        "camera_eye": list(CAMERA_INSPECTION_EYE),
+        "camera_target": list(CAMERA_INSPECTION_TARGET),
+        "focal_length_mm": 18.0,
+        "horizontal_aperture_mm": 20.955,
+        "visual_housing_prim": housing_path,
+    }
 
 
 async def build_scene() -> None:
@@ -231,14 +223,24 @@ async def build_scene() -> None:
     print("EUN_CONTROL_SETUP=creating_velocity_controller", flush=True)
     velocity_controller = Ros2VelocityController()
     velocity_controller.attach_ros_node(ros2_backend.node)
+    camera_graph = EUNROS2RGBCameraGraph(
+        CAMERA_RELATIVE_PATH,
+        config={
+            "resolution": list(CAMERA_RESOLUTION),
+            "namespace": "/drone0",
+            "topic": "/camera",
+            "tf_frame_id": CAMERA_FRAME_ID,
+        },
+    )
     vehicle_config.backends = [ros2_backend, velocity_controller]
+    vehicle_config.graphs = [camera_graph]
     print("EUN_CONTROL_SETUP=creating_multirotor", flush=True)
     vehicle = Multirotor(
         "/World/eun_iris",
         ROBOTS["Iris"],
         0,
-        [8.0, 8.0, 18.0],
-        [0.0, 0.0, 0.0, 1.0],
+        list(DRONE_INSPECTION_SPAWN_POSITION),
+        list(DRONE_INSPECTION_SPAWN_ORIENTATION_XYZW),
         config=vehicle_config,
     )
     physics_probe = {"steps": 0, "last_dt": 0.0}
@@ -248,12 +250,12 @@ async def build_scene() -> None:
         physics_probe["last_dt"] = float(dt)
 
     pegasus.world.add_physics_callback("/World/eun_runtime_probe", record_physics_step)
-    print("EUN_CONTROL_SETUP=creating_drone_camera", flush=True)
-    drone_camera_path = "/World/eun_iris/body/EunFpvCamera"
-    add_drone_camera(stage, drone_camera_path)
+    drone_camera_path = CAMERA_PRIM
     print("EUN_CONTROL_SETUP=resetting_world", flush=True)
     await pegasus.world.reset_async()
     print("EUN_CONTROL_SETUP=world_reset", flush=True)
+    print("EUN_CONTROL_SETUP=configuring_drone_camera", flush=True)
+    camera_mount_evidence = configure_drone_camera_mount(stage, drone_camera_path)
 
     # Preserve Pegasus' overview camera and add persistent 4.2 m inspection
     # cameras. The front inspection camera is the default WebRTC/world view.
@@ -274,7 +276,7 @@ async def build_scene() -> None:
         define_camera(stage, path, eye, inspection_target)
         inspection_camera_paths[name] = path
     world_camera_path = INSPECTION_CAMERA
-    viewport.camera_path = world_camera_path
+    viewport.camera_path = drone_camera_path
     if not stage.GetPrimAtPath(drone_camera_path).IsValid():
         raise RuntimeError(f"EUN drone camera is missing: {drone_camera_path}")
     velocity_controller.attach_keyboard(
@@ -289,12 +291,12 @@ async def build_scene() -> None:
         await app.next_update_async()
 
     # Keep the streaming service readiness independent from image readback.
-    # Headless viewport capture can wait indefinitely when no WebRTC client is
-    # consuming frames; deterministic RGB proof is produced by eun_sdg.py.
+    # Full-streaming advances the camera render product only while a WebRTC
+    # client is connected. The external capture command enforces its timeout.
     evidence = {}
-    capture_errors = {"viewport": "deferred_to_headless_basic_writer"}
+    capture_errors = {"viewport": "requires_connected_full_streaming_client"}
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
-    viewport.camera_path = world_camera_path
+    viewport.camera_path = drone_camera_path
     evidence["binary_source_mask"] = str(EVIDENCE_DIR / "binary_mask.png")
     source_mask_in_container = provenance["source_mask_copy"].replace(
         "/home/dong/eun/drone/.runtime/eun-webrtc", "/workspace/run"
@@ -303,8 +305,14 @@ async def build_scene() -> None:
     stage.Export(str(EVIDENCE_DIR / "scene.usda"))
     evidence["scene_usda"] = str(EVIDENCE_DIR / "scene.usda")
     for artifact in EVIDENCE_DIR.rglob("*"):
-        artifact.chmod(0o777 if artifact.is_dir() else 0o666)
-    EVIDENCE_DIR.chmod(0o777)
+        try:
+            artifact.chmod(0o777 if artifact.is_dir() else 0o666)
+        except PermissionError:
+            carb.log_warn(f"Could not normalize evidence permissions: {artifact}")
+    try:
+        EVIDENCE_DIR.chmod(0o777)
+    except PermissionError:
+        carb.log_warn(f"Could not normalize evidence directory permissions: {EVIDENCE_DIR}")
 
     ros2_self_test = {
         "enabled": os.environ.get("EUN_ROS2_SELF_TEST", "0") == "1",
@@ -342,6 +350,9 @@ async def build_scene() -> None:
             "/drone0/state/twist",
             "/drone0/state/twist_inertial",
         ],
+        "ros2_camera_topics": {
+            "rgb": CAMERA_RGB_TOPIC,
+        },
         "ros2_cmd_vel_receive_count_at_ready": velocity_controller.cmd_vel_receive_count,
         "ros2_rotor_receive_counts_at_ready": list(ros2_backend.rotor_receive_counts),
         "ros2_last_rotor_reference_at_ready": velocity_controller.last_rotor_reference,
@@ -376,20 +387,36 @@ async def build_scene() -> None:
         "crack_provenance": str(provenance_path),
         "crack_target": "/World/TransferCrane main girder camera-facing steel surface",
         "independent_from": ["earlier aerial_ws container", "PX4"],
-        "signal_port": 49101,
-        "media_port": 47999,
-        "public_endpoint": "100.96.41.100",
-        "camera_path": world_camera_path,
+        "signal_port": int(os.environ.get("EUN_SIGNAL_PORT", "49101")),
+        "media_port": int(os.environ.get("EUN_MEDIA_PORT", "47999")),
+        "public_endpoint": os.environ.get("EUN_PUBLIC_ENDPOINT", "100.96.41.100"),
+        "camera_path": drone_camera_path,
         "world_camera_path": world_camera_path,
         "overview_camera_path": overview_camera_path,
         "drone_camera_path": drone_camera_path,
         "drone_camera_loaded": stage.GetPrimAtPath(drone_camera_path).IsValid(),
+        "drone_camera_graph": CAMERA_GRAPH_PRIM,
+        "drone_camera_fixed_mount": {
+            "parent": "/World/eun_iris/body",
+            "method": "body-child rigid transform",
+            "translation_m": list(CAMERA_TRANSLATION_M),
+            "rotate_y_deg": CAMERA_ROTATE_Y_DEG,
+            "view": "body-forward with 10 degree downward pitch",
+            **camera_mount_evidence,
+        },
+        "drone_inspection_spawn": {
+            "position": list(DRONE_INSPECTION_SPAWN_POSITION),
+            "orientation_xyzw": list(DRONE_INSPECTION_SPAWN_ORIENTATION_XYZW),
+            "camera_eye": list(CAMERA_INSPECTION_EYE),
+            "target": list(CAMERA_INSPECTION_TARGET),
+            "distance_m": 4.2,
+        },
         "camera_toggle_key": "C",
         "viewport_resolution": [1280, 720],
         "camera_method": "persistent crack inspection USD camera plus Iris body camera toggle",
         "evidence": evidence,
         "capture_errors": capture_errors,
-        "headless_rgb_probe": "deferred_to_headless_basic_writer",
+        "headless_rgb_probe": "requires_connected_full_streaming_client",
         "visual_validation": "saved PNGs require direct review; runtime structure alone is not visual proof",
     }
     STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)

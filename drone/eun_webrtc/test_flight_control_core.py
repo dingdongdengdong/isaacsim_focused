@@ -5,6 +5,7 @@ import numpy as np
 
 from flight_control_core import (
     VelocityCommand,
+    keyboard_state_to_command,
     quaternion_xyzw_to_matrix,
     velocity_control_wrench,
 )
@@ -43,6 +44,14 @@ class FlightControlCoreTests(unittest.TestCase):
         )
         # Positive body-Y pitch tilts the body +Z thrust vector toward world +X.
         self.assertGreater(torque[1], 0.0)
+
+    def test_keyboard_state_maps_to_body_velocity_command(self):
+        command = keyboard_state_to_command({"W", "A", "R", "Q"})
+        self.assertEqual(command, VelocityCommand(1.0, 1.0, 1.0, 1.0))
+
+    def test_opposite_keyboard_inputs_cancel(self):
+        command = keyboard_state_to_command({"W", "S", "A", "D", "R", "F", "Q", "E"})
+        self.assertEqual(command, VelocityCommand())
 
 
 if __name__ == "__main__":

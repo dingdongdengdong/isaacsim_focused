@@ -33,6 +33,16 @@ class VelocityCommand:
         )
 
 
+def keyboard_state_to_command(pressed: set[str]) -> VelocityCommand:
+    """Map the EUN flight keys to an unclipped body-frame velocity command."""
+    return VelocityCommand(
+        forward=float("W" in pressed) - float("S" in pressed),
+        left=float("A" in pressed) - float("D" in pressed),
+        up=float("R" in pressed) - float("F" in pressed),
+        yaw_rate=float("Q" in pressed) - float("E" in pressed),
+    )
+
+
 def quaternion_xyzw_to_matrix(quaternion) -> np.ndarray:
     """Convert an Isaac/Pegasus XYZW quaternion to a 3x3 rotation matrix."""
     x, y, z, w = np.asarray(quaternion, dtype=float)
